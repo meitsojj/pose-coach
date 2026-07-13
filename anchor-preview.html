@@ -44,7 +44,7 @@
     </div>
     <div class="card">
       <h2>圖層</h2>
-      <label class="tg"><input type="checkbox" id="lyPose" checked>錨定幽靈骨架</label>
+      <label class="tg"><input type="checkbox" id="lyPose" checked>錨定殘影(剪影+骨架)</label>
       <label class="tg"><input type="checkbox" id="lyComp" checked>美感構圖層(三分格・眼睛線)</label>
       <label class="tg"><input type="checkbox" id="lyReel">Reels 安全區層(構圖卡座標)</label>
     </div>
@@ -57,7 +57,10 @@
 <script>
 // 只畫軀幹四肢;臉部 11 點與手指端點不連線(小尺寸下會變亂線),頭部另以圓表示
 const CONN = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],
-  [23,24],[23,25],[24,26],[25,27],[26,28],[27,31],[28,32]];
+  [23,24],[23,25],[24,26],[25,27],[26,28]];
+// 手掌方向短線(腕→掌指中點)與腳掌三角(踝-跟-趾)
+const HANDS = [[15,17,19],[16,18,20]], FEET = [[27,29,31],[28,30,32]];
+const mid = (a, b) => [(a[0]+b[0])/2, (a[1]+b[1])/2];
 // 頭圓:圓心 = 雙耳中點,半徑 = 肩寬 × 0.36
 function headCircle(pts) {
   const cx = (pts[7][0] + pts[8][0]) / 2, cy = (pts[7][1] + pts[8][1]) / 2;
@@ -106,8 +109,14 @@ function drawSkeleton(g, t, m, lw) {
   g.strokeStyle = 'rgba(45,212,191,.9)'; g.fillStyle = 'rgba(45,212,191,.9)';
   g.shadowColor = 'rgba(45,212,191,.5)'; g.shadowBlur = lw * 2;
   CONN.forEach(([a, b]) => { g.beginPath(); g.moveTo(...pts[a]); g.lineTo(...pts[b]); g.stroke(); });
-  // 只在肢體關節畫點(肩肘腕髖膝踝腳尖)
-  [11,12,13,14,15,16,23,24,25,26,27,28,31,32].forEach(i => {
+  // 手掌方向與腳掌三角(A 風格細節)
+  HANDS.forEach(([w, p, i]) => { const f = mid(pts[p], pts[i]);
+    g.beginPath(); g.moveTo(...pts[w]); g.lineTo(...f); g.stroke();
+    g.beginPath(); g.arc(f[0], f[1], lw * .8, 0, 7); g.fill(); });
+  FEET.forEach(([a, h, t]) => { g.beginPath(); g.moveTo(...pts[a]);
+    g.lineTo(...pts[h]); g.lineTo(...pts[t]); g.closePath(); g.stroke(); });
+  // 只在肢體關節畫點(肩肘腕髖膝踝)
+  [11,12,13,14,15,16,23,24,25,26,27,28].forEach(i => {
     g.beginPath(); g.arc(pts[i][0], pts[i][1], lw * .9, 0, 7); g.fill(); });
   const [hx2, hy2, hr] = headCircle(pts);
   g.beginPath(); g.arc(hx2, hy2, hr, 0, 7); g.stroke();
@@ -124,12 +133,28 @@ function drawThumb(c, t) {
   const s = Math.min(c.width * .7 / (x1 - x0 + 1e-6), c.height * .82 / (y1 - y0 + 1e-6));
   const m = p => [(p[0] - (x0 + x1) / 2) * s + c.width / 2, (p[1] - (y0 + y1) / 2) * s + c.height / 2];
   const pts = t.lm.map(m);
-  g.strokeStyle = '#9aa7b3'; g.lineWidth = 2; g.lineCap = 'round';
-  CONN.forEach(([a, b]) => { g.beginPath(); g.moveTo(...pts[a]); g.lineTo(...pts[b]); g.stroke(); });
+  // B 素描人偶:軀幹面 + 粗細不一的膠囊肢體 + 手腳形狀 + 關節鉚釘
+  const u = Math.max((y1 - y0) * s * 0.016, 1.6);
+  const col = '#79c3b4';
+  g.fillStyle = col; g.strokeStyle = col; g.lineCap = 'round';
+  g.beginPath(); [11,12,24,23].forEach((i, k) => k ? g.lineTo(...pts[i]) : g.moveTo(...pts[i]));
+  g.closePath(); g.fill();
+  const limbs = [[11,13,3],[13,15,2.2],[12,14,3],[14,16,2.2],
+                 [23,25,3.6],[25,27,2.6],[24,26,3.6],[26,28,2.6]];
+  limbs.forEach(([a, b, k]) => { g.lineWidth = u * k;
+    g.beginPath(); g.moveTo(...pts[a]); g.lineTo(...pts[b]); g.stroke(); });
+  HANDS.forEach(([w, p, i]) => { const f = mid(pts[p], pts[i]), c2 = mid(pts[w], f);
+    const ang = Math.atan2(f[1] - pts[w][1], f[0] - pts[w][0]);
+    g.beginPath(); g.ellipse(c2[0], c2[1], u * 1.6, u * 0.9, ang, 0, 7); g.fill(); });
+  FEET.forEach(([a, h, t2]) => { g.beginPath(); g.moveTo(...pts[a]);
+    g.lineTo(...pts[h]); g.lineTo(...pts[t2]); g.closePath(); g.fill(); });
   const [hx, hy, hr] = headCircle(pts);
-  g.beginPath(); g.arc(hx, hy, hr, 0, 7); g.stroke();
-  g.beginPath(); g.moveTo(hx, hy + hr);
+  g.beginPath(); g.arc(hx, hy, hr, 0, 7); g.fill();
+  g.lineWidth = u * 2; g.beginPath(); g.moveTo(hx, hy);
   g.lineTo((pts[11][0] + pts[12][0]) / 2, (pts[11][1] + pts[12][1]) / 2); g.stroke();
+  g.fillStyle = '#22343c';
+  [11,12,13,14,23,24,25,26].forEach(i => {
+    g.beginPath(); g.arc(pts[i][0], pts[i][1], Math.max(u * .55, 1), 0, 7); g.fill(); });
 }
 
 function render() {
@@ -139,8 +164,42 @@ function render() {
 
   if (document.getElementById('lyReel').checked) drawReelSafe();
   if (document.getElementById('lyComp').checked) drawCompGuide();
-  if (document.getElementById('lyPose').checked) drawSkeleton(ctx, cur, mapper(cur), 10);
+  if (document.getElementById('lyPose').checked) drawGhost(cur);
   hint();
+}
+
+// C 剪影殘影:遮罩染色 + 輪廓光 + 細骨架
+const maskCache = {};
+function tinted(img, color) {
+  const off = document.createElement('canvas');
+  off.width = img.naturalWidth; off.height = img.naturalHeight;
+  const og = off.getContext('2d');
+  og.drawImage(img, 0, 0);
+  og.globalCompositeOperation = 'source-in';
+  og.fillStyle = color; og.fillRect(0, 0, off.width, off.height);
+  return off;
+}
+function drawGhost(t) {
+  const m = mapper(t);
+  if (t.mask) {
+    let img = maskCache[t.mask];
+    if (!img) {
+      img = new Image();
+      img.onload = () => { if (cur === t) render(); };
+      img.src = t.mask; maskCache[t.mask] = img;
+    }
+    if (img.complete && img.naturalWidth) {
+      const [x0, y0] = m([0, 0]), [x1, y1] = m([1, 1]);
+      const w2 = x1 - x0, h2 = y1 - y0;
+      const glow = tinted(img, 'rgba(45,212,191,.9)');
+      [[-4,0],[4,0],[0,-4],[0,4],[-3,-3],[3,3],[-3,3],[3,-3]]
+        .forEach(([dx, dy]) => ctx.drawImage(glow, x0 + dx, y0 + dy, w2, h2));
+      ctx.globalAlpha = .92;
+      ctx.drawImage(tinted(img, '#274f58'), x0, y0, w2, h2);
+      ctx.globalAlpha = 1;
+    }
+  }
+  drawSkeleton(ctx, t, m, t.mask ? 5 : 10);
 }
 
 // 美感構圖層:三分格 + 模板眼睛線 + 頂部留白帶
