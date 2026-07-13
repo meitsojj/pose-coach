@@ -209,8 +209,21 @@ function drawStick(ctx, lm, w, h, color, lw) {
 
 function updateMiniRef() {
   const t = curTemplate();
-  const c = $('miniRef');
-  if (t) drawStick(c.getContext('2d'), t.lm, c.width, c.height, '#b56f58', 3);
+  const c = $('miniRef'), g = c.getContext('2d');
+  if (!t) return;
+  // 有人偶圖 → 右上參考窗直接顯示人偶完整圖；否則畫火柴人
+  if (t.doll) {
+    let img = ghostCache[t.doll];
+    if (!img) { img = new Image(); img.onload = () => updateMiniRef(); img.src = t.doll; ghostCache[t.doll] = img; }
+    if (img.complete && img.naturalWidth) {
+      g.clearRect(0, 0, c.width, c.height);
+      const s = Math.min(c.width / img.naturalWidth, c.height / img.naturalHeight);
+      const w = img.naturalWidth * s, h = img.naturalHeight * s;
+      g.drawImage(img, (c.width - w) / 2, (c.height - h) / 2, w, h);
+      return;
+    }
+  }
+  drawStick(g, t.lm, c.width, c.height, '#b56f58', 3);
 }
 
 // ---------- 上傳自訂模板 ----------
@@ -352,35 +365,50 @@ function drawGuides(ctx, comp, W, H) {
   }
 }
 
-// 淡化人偶（doll）或染色剪影（mask）錨定在模板站位；資產未載入回傳 false
+// 「點線面」引導殘影：輪廓環（線）＋骨架與關節（點線）＋極淡體面（面），錨定在模板站位
+// 形狀來源：doll 的 alpha 或剪影 mask；資產未載入回傳 false
+function ghostAssets(src) {
+  const key = src + '#ghost';
+  if (ghostCache[key]) return ghostCache[key];
+  const img = ghostCache[src];
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const solid = document.createElement('canvas'); solid.width = w; solid.height = h;
+  let g = solid.getContext('2d');
+  g.drawImage(img, 0, 0);
+  g.globalCompositeOperation = 'source-in';
+  g.fillStyle = '#eafffb'; g.fillRect(0, 0, w, h);
+  const ring = document.createElement('canvas'); ring.width = w; ring.height = h;
+  g = ring.getContext('2d');
+  [[-2,0],[2,0],[0,-2],[0,2],[-2,-2],[2,2],[-2,2],[2,-2]]
+    .forEach(([dx, dy]) => g.drawImage(solid, dx, dy));
+  g.globalCompositeOperation = 'destination-out';
+  g.drawImage(solid, 0, 0);
+  return (ghostCache[key] = { solid, ring });
+}
+
 function drawGhostCam(ctx, t, comp, W, H) {
   const src = t.doll || t.mask;
   if (!src || !comp.img_wh) return false;
   let img = ghostCache[src];
   if (!img) { img = new Image(); img.src = src; ghostCache[src] = img; }
   if (!img.complete || !img.naturalWidth) return false;
-  let drawable = img, alpha = .55;
-  if (!t.doll) {
-    const key = src + '#tint';
-    if (!ghostCache[key]) {
-      const off = document.createElement('canvas');
-      off.width = img.naturalWidth; off.height = img.naturalHeight;
-      const og = off.getContext('2d');
-      og.drawImage(img, 0, 0);
-      og.globalCompositeOperation = 'source-in';
-      og.fillStyle = '#2dd4bf'; og.fillRect(0, 0, off.width, off.height);
-      ghostCache[key] = off;
-    }
-    drawable = ghostCache[key]; alpha = .35;
-  }
   const gc = t.doll ? t.doll_comp : comp;      // 資產自身座標系
   const [dw, dh] = gc.img_wh;
   const s = ((comp.bbox[3] - comp.bbox[1]) * H) / ((gc.bbox[3] - gc.bbox[1]) * dh);
   const x0 = comp.hip[0] * W - gc.hip[0] * dw * s;
   const y0 = comp.hip[1] * H - gc.hip[1] * dh * s;
-  ctx.globalAlpha = alpha;
-  ctx.drawImage(drawable, x0, y0, dw * s, dh * s);
+  const a = ghostAssets(src);
+  ctx.globalAlpha = .12;                        // 面：幾乎透明的體感
+  ctx.drawImage(a.solid, x0, y0, dw * s, dh * s);
+  ctx.globalAlpha = .8;                         // 線：輪廓環
+  ctx.drawImage(a.ring, x0, y0, dw * s, dh * s);
   ctx.globalAlpha = 1;
+  // 點線：骨架（doll 用自身 doll_lm，剪影用模板 lm，同一座標系映射）
+  const lmSrc = t.doll ? t.doll_lm : t.lm;
+  if (lmSrc) {
+    const P = lmSrc.map(p => [x0 + p[0] * dw * s, y0 + p[1] * dh * s]);
+    drawSkel(ctx, P, 'rgba(255,255,255,.5)', 3);
+  }
   return true;
 }
 
