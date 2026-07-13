@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>POSE 引導鏡｜場景模板 × 即時骨架比對</title>
+<style>
+  :root { --bg:#faf7f2; --card:#fff; --ink:#2d2a26; --sub:#8a8378; --accent:#d4917b; --accent-dark:#b56f58; --ok:#7ba05b; --line:#eae4da; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif; background:var(--bg); color:var(--ink); padding:12px; }
+  .wrap { max-width:560px; margin:0 auto; }
+  h1 { font-size:1.3rem; text-align:center; margin:8px 0 2px; }
+  .tagline { text-align:center; color:var(--sub); font-size:.8rem; margin-bottom:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin-bottom:12px; }
+  .card h2 { font-size:.9rem; margin-bottom:8px; color:var(--accent-dark); }
+  select { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; font-size:.95rem; background:#fffdf9; margin-bottom:10px; }
+  .drop { border:2px dashed var(--line); border-radius:12px; padding:10px; text-align:center; cursor:pointer; color:var(--sub); font-size:.8rem; margin-top:10px; }
+  .drop:hover { border-color:var(--accent); background:#fdf6f1; }
+  #tmpls { display:flex; gap:8px; flex-wrap:wrap; }
+  .tmpl { position:relative; width:70px; height:94px; border-radius:10px; overflow:hidden; border:3px solid transparent; cursor:pointer; background:#f6f1e8; }
+  .tmpl canvas, .tmpl img { width:100%; height:100%; object-fit:cover; display:block; }
+  .tmpl.sel { border-color:var(--accent); }
+  .tmpl .del { position:absolute; top:2px; right:2px; background:rgba(0,0,0,.55); color:#fff; border:none; border-radius:50%; width:18px; height:18px; font-size:11px; line-height:1; cursor:pointer; }
+  .stage { position:relative; border-radius:16px; overflow:hidden; background:#000; display:none; }
+  #video { width:100%; display:block; }
+  #overlay { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  .hud { position:absolute; top:10px; left:10px; right:10px; display:flex; justify-content:space-between; align-items:flex-start; pointer-events:none; }
+  #score { background:rgba(0,0,0,.55); color:#fff; border-radius:12px; padding:6px 14px; font-size:1.05rem; font-weight:700; }
+  #score.good { background:rgba(123,160,91,.85); }
+  #miniRef { width:84px; height:112px; background:rgba(255,255,255,.85); border-radius:10px; }
+  #hint { position:absolute; bottom:64px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.6); color:#fff; border-radius:10px; padding:6px 14px; font-size:.9rem; white-space:nowrap; }
+  .ctrl { position:absolute; bottom:10px; left:0; right:0; display:flex; justify-content:center; gap:14px; }
+  .ctrl button { border:none; border-radius:50%; width:52px; height:52px; font-size:1.3rem; cursor:pointer; background:rgba(255,255,255,.9); }
+  .ctrl .shot { width:64px; height:64px; background:var(--accent); color:#fff; font-size:1.6rem; }
+  button.go { width:100%; padding:13px; border:none; border-radius:12px; font-size:.95rem; font-weight:700; background:var(--accent); color:#fff; cursor:pointer; }
+  button.go:disabled { background:#d9d2c7; }
+  .status { text-align:center; color:var(--sub); font-size:.8rem; margin:8px 0; }
+  footer { text-align:center; color:var(--sub); font-size:.7rem; margin:18px 0 8px; }
+  a.dl { display:none; text-align:center; margin-top:8px; color:var(--accent-dark); font-size:.85rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🩰 POSE 引導鏡</h1>
+  <div class="tagline">選場景或上傳參考照 → 相機出現幽靈骨架 → 跟著擺就對了</div>
+
+  <div class="card">
+    <h2>1️⃣ 選擇場景與 Pose</h2>
+    <select id="scene"></select>
+    <div id="tmpls"></div>
+    <div class="drop" id="drop">＋ 也可以上傳自己的參考照（IG 截圖、講義照片都行）</div>
+    <input type="file" id="file" accept="image/*" multiple style="display:none">
+  </div>
+
+  <button class="go" id="start" disabled>2️⃣ 開啟相機開始引導</button>
+  <div class="status" id="status">模型載入中…</div>
+
+  <div class="stage" id="stage">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div class="hud">
+      <div id="score">--</div>
+      <canvas id="miniRef" width="84" height="112"></canvas>
+    </div>
+    <div id="hint" style="display:none"></div>
+    <div class="ctrl">
+      <button id="flip" title="切換鏡頭">🔄</button>
+      <button class="shot" id="shot" title="拍照">📷</button>
+      <button id="stop" title="停止">✖️</button>
+    </div>
+  </div>
+  <a class="dl" id="dl" download="pose-shot.jpg">⬇️ 下載剛拍的照片</a>
+
+  <footer>MediaPipe Pose · 全程在你的裝置上運算，影像不會上傳<br>知識引擎：Record Daily Life「全方位社群美照養成術」課程蒸餾 · 僅供個人使用</footer>
+</div>
+
+<script type="module">
+import { FilesetResolver, PoseLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const $ = id => document.getElementById(id);
+const CONN = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,31],[28,32]];
+const JOINTS = [
+  ['左手肘',11,13,15],['右手肘',12,14,16],
+  ['左肩',23,11,13],['右肩',24,12,14],
+  ['左髖',11,23,25],['右髖',12,24,26],
+  ['左膝',23,25,27],['右膝',24,26,28]
+];
+const HINT_MAP = { '手肘':'手肘角度調整一下', '肩':'手臂整體再擺一下', '髖':'身體傾斜方向調整', '膝':'腿的彎曲度調整' };
+const UPLOAD_SCENE = '📁 我的上傳';
+
+let imageLm = null, videoLm = null;
+let builtins = {};                      // 場景 → 模板陣列（templates.json）
+let uploads = JSON.parse(localStorage.getItem('pose_templates') || '[]'); // 使用者上傳
+let curScene = null, selIdx = 0;
+let stream = null, facing = 'environment', rafId = null;
+
+const statusEl = $('status');
+
+(async () => {
+  try {
+    const [visionP, tmplP] = [
+      FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"),
+      fetch('templates.json').then(r => r.ok ? r.json() : {})
+    ];
+    builtins = await tmplP;
+    const vision = await visionP;
+    const opts = mode => ({ baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task", delegate: "GPU" }, runningMode: mode, numPoses: 1 });
+    imageLm = await PoseLandmarker.createFromOptions(vision, opts("IMAGE"));
+    videoLm = await PoseLandmarker.createFromOptions(vision, opts("VIDEO"));
+    initScenes();
+    statusEl.textContent = '✅ 就緒。選一個 pose 後開啟相機。';
+  } catch (e) {
+    statusEl.textContent = '❌ 載入失敗：' + e.message;
+  }
+})();
+
+// ---------- 場景與模板 ----------
+function sceneOrder() {
+  const pref = ['戶外人像','咖啡廳','花海','夜拍','獨旅自拍','全身pose','半身pose','不露臉','男生','雙人','姿勢靈感'];
+  const names = pref.filter(s => builtins[s] && builtins[s].length);
+  Object.keys(builtins).forEach(s => { if (!names.includes(s) && builtins[s].length) names.push(s); });
+  names.push(UPLOAD_SCENE);
+  return names;
+}
+
+function initScenes() {
+  const sel = $('scene');
+  sel.innerHTML = '';
+  for (const s of sceneOrder()) {
+    const o = document.createElement('option');
+    o.value = s; o.textContent = s === UPLOAD_SCENE ? s : `📍 ${s}`;
+    sel.appendChild(o);
+  }
+  sel.onchange = () => { curScene = sel.value; selIdx = 0; renderTmpls(); };
+  curScene = sel.value;
+  renderTmpls();
+}
+
+function curList() {
+  return curScene === UPLOAD_SCENE ? uploads : (builtins[curScene] || []);
+}
+function curTemplate() {
+  const l = curList();
+  return l.length ? l[Math.min(selIdx, l.length - 1)] : null;
+}
+
+function renderTmpls() {
+  const box = $('tmpls'); box.innerHTML = '';
+  const list = curList();
+  list.forEach((t, i) => {
+    const d = document.createElement('div');
+    d.className = 'tmpl' + (i === selIdx ? ' sel' : '');
+    if (t.thumb) {
+      const img = document.createElement('img'); img.src = t.thumb; d.appendChild(img);
+    } else {
+      const c = document.createElement('canvas'); c.width = 70; c.height = 94;
+      drawStick(c.getContext('2d'), t.lm, 70, 94, '#b56f58', 2.5);
+      d.appendChild(c);
+    }
+    if (curScene === UPLOAD_SCENE) {
+      const del = document.createElement('button');
+      del.className = 'del'; del.textContent = '✕';
+      del.onclick = e => {
+        e.stopPropagation(); uploads.splice(i, 1);
+        localStorage.setItem('pose_templates', JSON.stringify(uploads));
+        if (selIdx >= uploads.length) selIdx = Math.max(0, uploads.length - 1);
+        renderTmpls();
+      };
+      d.appendChild(del);
+    }
+    d.onclick = () => { selIdx = i; renderTmpls(); };
+    box.appendChild(d);
+  });
+  if (!list.length) box.innerHTML = '<div style="color:var(--sub);font-size:.8rem;padding:8px">這個分類還沒有模板，上傳一張參考照吧。</div>';
+  $('start').disabled = !(videoLm && curTemplate());
+  updateMiniRef();
+}
+
+// 火柴人繪製：把 lm 正規化置入 w×h 畫布
+function drawStick(ctx, lm, w, h, color, lw) {
+  ctx.clearRect(0, 0, w, h);
+  const xs = lm.map(p => p[0]), ys = lm.map(p => p[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const spanX = maxX - minX || 1e-6, spanY = maxY - minY || 1e-6;
+  const s = Math.min((w - 14) / spanX, (h - 14) / spanY);
+  const ox = (w - spanX * s) / 2, oy = (h - spanY * s) / 2;
+  const P = lm.map(p => [ox + (p[0] - minX) * s, oy + (p[1] - minY) * s]);
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = lw; ctx.lineCap = 'round';
+  for (const [a, b] of CONN) { ctx.beginPath(); ctx.moveTo(...P[a]); ctx.lineTo(...P[b]); ctx.stroke(); }
+  // 頭：用鼻子(0)與肩中點畫圓
+  const shMid = [(P[11][0]+P[12][0])/2, (P[11][1]+P[12][1])/2];
+  const r = Math.hypot(P[0][0]-shMid[0], P[0][1]-shMid[1]) * 0.6 + lw;
+  ctx.beginPath(); ctx.arc(P[0][0], P[0][1], r, 0, 7); ctx.stroke();
+}
+
+function updateMiniRef() {
+  const t = curTemplate();
+  const c = $('miniRef');
+  if (t) drawStick(c.getContext('2d'), t.lm, c.width, c.height, '#b56f58', 3);
+}
+
+// ---------- 上傳自訂模板 ----------
+$('drop').onclick = () => $('file').click();
+$('file').onchange = async () => {
+  for (const f of $('file').files) await addUpload(f);
+  $('file').value = '';
+  $('scene').value = UPLOAD_SCENE; curScene = UPLOAD_SCENE;
+  selIdx = uploads.length - 1;
+  renderTmpls();
+};
+
+async function addUpload(f) {
+  if (!imageLm) { alert('模型還在載入'); return; }
+  const img = new Image();
+  await new Promise(r => { img.onload = r; img.src = URL.createObjectURL(f); });
+  const res = imageLm.detect(img);
+  if (!res.landmarks || !res.landmarks.length) { alert(f.name + '：偵測不到人體骨架，換一張試試'); return; }
+  const lm = res.landmarks[0].map(p => [+p.x.toFixed(4), +p.y.toFixed(4)]);
+  const c = document.createElement('canvas'); const s = 160 / Math.max(img.width, img.height);
+  c.width = img.width * s; c.height = img.height * s;
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  uploads.push({ id: 'up-' + Date.now(), thumb: c.toDataURL('image/jpeg', .7), lm });
+  try { localStorage.setItem('pose_templates', JSON.stringify(uploads)); } catch(e) {}
+}
+
+// ---------- 幾何 ----------
+const mid = (a, b) => [(a[0]+b[0])/2, (a[1]+b[1])/2];
+const angle = (A, B, C) => {
+  const v1 = [A[0]-B[0], A[1]-B[1]], v2 = [C[0]-B[0], C[1]-B[1]];
+  const d = v1[0]*v2[0] + v1[1]*v2[1];
+  const m = Math.hypot(...v1) * Math.hypot(...v2);
+  return m ? Math.acos(Math.max(-1, Math.min(1, d/m))) * 180 / Math.PI : 0;
+};
+function normalize(lm) {
+  const hip = mid(lm[23], lm[24]), sh = mid(lm[11], lm[12]);
+  const scale = Math.hypot(sh[0]-hip[0], sh[1]-hip[1]) || 1e-6;
+  return { pts: lm.map(p => [(p[0]-hip[0])/scale, (p[1]-hip[1])/scale]), hip, scale };
+}
+
+// ---------- 相機 ----------
+$('start').onclick = openCam;
+$('flip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; openCam(); };
+$('stop').onclick = () => closeCam();
+
+async function openCam() {
+  closeCam(false);
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: {ideal: 1280} }, audio: false });
+  } catch (e) { statusEl.textContent = '❌ 相機開啟失敗：' + e.message + '（手機需 HTTPS）'; return; }
+  const v = $('video'); v.srcObject = stream;
+  await new Promise(r => v.onloadedmetadata = r);
+  $('stage').style.display = 'block';
+  const ov = $('overlay'); ov.width = v.videoWidth; ov.height = v.videoHeight;
+  updateMiniRef();
+  loop();
+}
+
+function closeCam(hide = true) {
+  if (rafId) cancelAnimationFrame(rafId);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+  if (hide) $('stage').style.display = 'none';
+}
+
+// ---------- 主迴圈 ----------
+let lastT = -1;
+function loop() {
+  const v = $('video');
+  if (!stream) return;
+  const now = performance.now();
+  if (v.readyState >= 2 && now !== lastT) {
+    lastT = now;
+    const res = videoLm.detectForVideo(v, now);
+    draw(res.landmarks && res.landmarks[0] ? res.landmarks[0].map(p => [p.x, p.y]) : null);
+  }
+  rafId = requestAnimationFrame(loop);
+}
+
+function draw(live) {
+  const ov = $('overlay'), ctx = ov.getContext('2d');
+  const W = ov.width, H = ov.height;
+  ctx.clearRect(0, 0, W, H);
+  const tmpl = curTemplate();
+  if (!tmpl) return;
+
+  const ref = normalize(tmpl.lm);
+  let anchorHip, anchorScale;
+  if (live) {
+    const ln = normalize(live);
+    anchorHip = [ln.hip[0]*W, ln.hip[1]*H];
+    anchorScale = ln.scale * H;
+  } else {
+    anchorHip = [W/2, H*0.55]; anchorScale = H*0.18;
+  }
+  const refPx = ref.pts.map(p => [anchorHip[0] + p[0]*anchorScale, anchorHip[1] + p[1]*anchorScale]);
+
+  drawSkel(ctx, refPx, 'rgba(255,255,255,.75)', 6);
+  if (live) {
+    const livePx = live.map(p => [p[0]*W, p[1]*H]);
+    drawSkel(ctx, livePx, 'rgba(212,145,123,.9)', 4);
+    scoreAndHint(tmpl.lm, live);
+  } else {
+    $('score').textContent = '找不到人';
+    $('score').classList.remove('good');
+    $('hint').style.display = 'none';
+  }
+}
+
+function drawSkel(ctx, pts, color, w) {
+  ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = 'round';
+  for (const [a, b] of CONN) {
+    if (!pts[a] || !pts[b]) continue;
+    ctx.beginPath(); ctx.moveTo(...pts[a]); ctx.lineTo(...pts[b]); ctx.stroke();
+  }
+  ctx.fillStyle = color;
+  for (const i of [11,12,13,14,15,16,23,24,25,26,27,28]) {
+    if (!pts[i]) continue;
+    ctx.beginPath(); ctx.arc(pts[i][0], pts[i][1], w+1, 0, 7); ctx.fill();
+  }
+}
+
+function scoreAndHint(refLm, liveLm) {
+  let total = 0, worst = null, worstDiff = 0;
+  for (const [name, a, b, c] of JOINTS) {
+    const d = Math.abs(angle(refLm[a], refLm[b], refLm[c]) - angle(liveLm[a], liveLm[b], liveLm[c]));
+    total += d;
+    if (d > worstDiff) { worstDiff = d; worst = name; }
+  }
+  const avg = total / JOINTS.length;
+  const score = Math.max(0, Math.round(100 - avg * 1.8));
+  const el = $('score');
+  el.textContent = score + ' 分';
+  el.classList.toggle('good', score >= 85);
+  const hint = $('hint');
+  if (score >= 85) { hint.textContent = '✨ 就是這個 pose！拍！'; hint.style.display = 'block'; }
+  else if (worstDiff > 25) {
+    const key = Object.keys(HINT_MAP).find(k => worst.includes(k));
+    hint.textContent = '💡 ' + worst + '：' + (key ? HINT_MAP[key] : '再調整一下');
+    hint.style.display = 'block';
+  } else hint.style.display = 'none';
+}
+
+// ---------- 拍照 ----------
+$('shot').onclick = () => {
+  const v = $('video');
+  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  const dl = $('dl');
+  dl.href = c.toDataURL('image/jpeg', .92);
+  dl.style.display = 'block';
+  dl.click();
+};
+</script>
+</body>
+</html>

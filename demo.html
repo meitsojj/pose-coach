@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 拍照教練｜POSE 建議工具 MVP</title>
+<style>
+  :root {
+    --bg: #faf7f2; --card: #ffffff; --ink: #2d2a26; --sub: #8a8378;
+    --accent: #d4917b; --accent-dark: #b56f58; --ok: #7ba05b; --line: #eae4da;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif; background: var(--bg); color: var(--ink); min-height: 100vh; padding: 16px; }
+  .wrap { max-width: 560px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; text-align: center; margin: 12px 0 4px; }
+  .tagline { text-align: center; color: var(--sub); font-size: .85rem; margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(0,0,0,.04); }
+  .card h2 { font-size: .95rem; margin-bottom: 10px; color: var(--accent-dark); }
+  input[type="password"], select {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+    font-size: .9rem; background: #fffdf9;
+  }
+  .hint { font-size: .75rem; color: var(--sub); margin-top: 6px; }
+  .drop {
+    border: 2px dashed var(--line); border-radius: 14px; padding: 28px 12px; text-align: center;
+    cursor: pointer; transition: .2s; color: var(--sub); font-size: .9rem;
+  }
+  .drop:hover, .drop.on { border-color: var(--accent); background: #fdf6f1; }
+  #preview { max-width: 100%; max-height: 340px; border-radius: 12px; display: none; margin: 12px auto 0; }
+  .row { display: flex; gap: 10px; margin-top: 10px; }
+  .row > div { flex: 1; }
+  label { font-size: .8rem; color: var(--sub); display: block; margin-bottom: 4px; }
+  button.go {
+    width: 100%; padding: 14px; border: none; border-radius: 12px; font-size: 1rem; font-weight: 700;
+    background: var(--accent); color: #fff; cursor: pointer; transition: .2s;
+  }
+  button.go:hover { background: var(--accent-dark); }
+  button.go:disabled { background: #d9d2c7; cursor: not-allowed; }
+  #result { display: none; white-space: normal; line-height: 1.7; font-size: .92rem; }
+  #result h3 { font-size: 1rem; color: var(--accent-dark); margin: 14px 0 6px; }
+  #result ul { padding-left: 20px; }
+  #result li { margin-bottom: 8px; }
+  .spin { display: none; text-align: center; color: var(--sub); font-size: .85rem; padding: 10px; }
+  .spin.on { display: block; }
+  .err { color: #b0473a; font-size: .85rem; margin-top: 8px; display: none; }
+  .badge { display: inline-block; background: #f3ece2; color: var(--accent-dark); border-radius: 6px; padding: 1px 8px; font-size: .75rem; margin-right: 6px; }
+  footer { text-align: center; color: var(--sub); font-size: .72rem; margin: 24px 0 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📸 AI 拍照教練</h1>
+  <div class="tagline">上傳照片，用「全方位社群美照養成術」的方法論給你姿勢與構圖建議</div>
+
+  <div class="card">
+    <h2>1️⃣ Claude API Key</h2>
+    <input type="password" id="apikey" placeholder="sk-ant-...">
+    <div class="hint">只存在你瀏覽器的 localStorage，不會傳到任何第三方伺服器。</div>
+  </div>
+
+  <div class="card">
+    <h2>2️⃣ 上傳照片</h2>
+    <div class="drop" id="drop">點擊選擇照片，或拖曳到這裡<br><span style="font-size:.75rem">（手機可直接開相機拍）</span></div>
+    <input type="file" id="file" accept="image/*" style="display:none">
+    <img id="preview" alt="">
+    <div class="row">
+      <div>
+        <label>拍攝類型</label>
+        <select id="shotType">
+          <option value="自動判斷">自動判斷</option>
+          <option>全身照</option><option>半身照</option><option>自拍</option>
+          <option>雙人合照</option><option>多人合照</option><option>不露臉</option>
+        </select>
+      </div>
+      <div>
+        <label>想要的感覺</label>
+        <select id="mood">
+          <option value="自然生活感">自然生活感</option>
+          <option>可愛活潑</option><option>優雅氣質</option><option>性感氛圍</option>
+          <option>帥氣有型</option><option>日系清新</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <button class="go" id="go" disabled>3️⃣ 給我建議！</button>
+  <div class="spin" id="spin">🎞️ 教練看照片中，約 10~20 秒…</div>
+  <div class="err" id="err"></div>
+
+  <div class="card" id="result"></div>
+
+  <footer>知識引擎：Record Daily Life「全方位社群美照養成術」蒸餾 · 僅供個人使用</footer>
+</div>
+
+<script>
+const SYSTEM_PROMPT = `你是一位溫暖專業的拍照教練，方法論來自手機攝影課程「全方位社群美照養成術」。使用者會上傳一張照片，你依照以下六步分析協定給建議。
+
+【六步分析協定】
+1. 體態掃描（十二誤區）：脖子前傾(烏龜頸)/壓下巴/咀嚼肌對鏡頭/聳肩/駝背/手臂緊貼身體(蝴蝶袖)/手肘對鏡頭/凸小腹/站太直如衛兵/坐滿椅子膝蓋對鏡頭/盤腿擠肉/軟床駝背
+2. 重心與關節：重心是否在遠離鏡頭的後腳、腿是否打直(膝蓋皺褶)、關節有無活用、身體部位間有無留空隙(緊貼=顯肉)
+3. 手部：手腕是否下垂(像小偷)、手掌是否整個貼上去(應用指尖/指腹)、手有沒有地方放
+4. 臉部角度：是否壓下巴、咀嚼肌是否對鏡頭、表情肌肉(眼笑嘴不笑)、歪頭方向是否正確(正面左右可、45度往轉頭側水平倒、只有全側面可往後倒)
+5. 光線判斷：順光(飽滿)/側光(立體但皮膚凹凸明顯)/逆光(顯瘦日系)/頂光(眼下重陰影,避免)/鬼光(由下往上,最糟)
+6. 構圖：水平是否歪、是否切到關節(應切胸口/肚臍/大腿中段)、頭重腳輕、留白方向是否在視線方向、焦段變形(邊角拉伸)
+
+【建議時可引用的課程口訣與招式庫】
+- 「遠離鏡頭那隻腳當重心」「大關節往後帶,視覺減5公斤」「身體留空隙才不顯肉」
+- 「爪子抓頭頂往上拉」(治烏龜頸)、「肩膀往後轉半圈再放下」(治駝背)、「舌中段頂上顎」(治雙下巴)
+- 手部萬用公式:上(遮太陽/比YA/捧臉/摸耳垂)、中(摸脖子/插腰/放肚臍前)、下(擺背後/插口袋);另一手拿杯子/包包/手機
+- 摸耳垂用中指+小拇指朝外(成功率最高)、插腰位置往上一點(腿顯長)、手腕不垂
+- 坐姿:只坐前緣、小腿外伸、腳尖下壓(視覺+9cm)、有效內八(膝內+腳尖也朝內)
+- 樓梯永遠側身不正面、蹲要側蹲
+- 雙人口訣:一上一下/一左一右/一前一後;情侶新手:男勾腰+插口袋
+- 構圖黃金口訣:「從胸口出發距離1.5,人在兩格踩變焦」;半身用2x焦段最像本人
+- 十大情境口訣(給故事帶動作):拍風景手機擋臉/抓包包找手機/伸懶腰太陽好大/綁頭髮沒髮圈/上班下班轉半圈/飲料還沒來/不想起床/暈船倒懷裡/要跑抓回來/三種戀愛系男友
+
+【輸出格式】(用繁體中文,Markdown)
+### 📷 這張照片的亮點
+1-2 句真誠具體的稱讚(課程原則:先誇獎,建立信心)
+
+### 🔧 三個最有感的改善點
+每點格式:**部位/問題** → 怎麼做(引用課程口訣,說「希望你做什麼」而非「你現在多糟」,一次只說一點)
+
+### 💃 下次可以試試的 2 個 Pose
+從招式庫選,附具體步驟(2-3步),說明為什麼適合這張照片的場景與使用者想要的感覺
+
+### 🌟 一句鼓勵
+呼應課程精神:「上鏡感不是天賦,是積累」
+
+【語言原則】絕不用負面詞彙(胖/醜/糟);說希望對方做什麼;具體到部位和方向;親切像朋友。`;
+
+const $ = id => document.getElementById(id);
+const apikey = $('apikey'), drop = $('drop'), file = $('file'), preview = $('preview');
+const go = $('go'), spin = $('spin'), err = $('err'), result = $('result');
+let imgB64 = null, imgType = 'image/jpeg';
+
+apikey.value = localStorage.getItem('pose_coach_key') || '';
+apikey.addEventListener('change', () => localStorage.setItem('pose_coach_key', apikey.value.trim()));
+
+drop.onclick = () => file.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('on'); };
+drop.ondragleave = () => drop.classList.remove('on');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('on'); if (e.dataTransfer.files[0]) loadImg(e.dataTransfer.files[0]); };
+file.onchange = () => { if (file.files[0]) loadImg(file.files[0]); };
+
+function loadImg(f) {
+  const img = new Image();
+  img.onload = () => {
+    // 縮到長邊 1092px 以內，省 token
+    const max = 1092;
+    let w = img.width, h = img.height;
+    if (Math.max(w, h) > max) { const s = max / Math.max(w, h); w = Math.round(w*s); h = Math.round(h*s); }
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    const dataUrl = c.toDataURL('image/jpeg', 0.85);
+    imgB64 = dataUrl.split(',')[1]; imgType = 'image/jpeg';
+    preview.src = dataUrl; preview.style.display = 'block';
+    checkReady();
+  };
+  img.src = URL.createObjectURL(f);
+}
+
+function checkReady() { go.disabled = !(imgB64 && apikey.value.trim()); }
+apikey.addEventListener('input', checkReady);
+
+go.onclick = async () => {
+  err.style.display = 'none'; result.style.display = 'none';
+  spin.classList.add('on'); go.disabled = true;
+  try {
+    const userText = `拍攝類型：${$('shotType').value}；想要的感覺：${$('mood').value}。請依分析協定給我建議。`;
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apikey.value.trim(),
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-5',
+        max_tokens: 1600,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: [
+          { type: 'image', source: { type: 'base64', media_type: imgType, data: imgB64 } },
+          { type: 'text', text: userText }
+        ]}]
+      })
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error?.message || ('HTTP ' + resp.status));
+    const text = data.content.map(b => b.text || '').join('');
+    result.innerHTML = mdToHtml(text);
+    result.style.display = 'block';
+    result.scrollIntoView({ behavior: 'smooth' });
+  } catch (e) {
+    err.textContent = '❌ ' + e.message;
+    err.style.display = 'block';
+  } finally {
+    spin.classList.remove('on'); go.disabled = false;
+  }
+};
+
+// 極簡 markdown 轉換（標題/粗體/清單）
+function mdToHtml(md) {
+  return md
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>[\s\S]+?<\/li>)(?!\s*<li>)/g, '<ul>$1</ul>')
+    .replace(/\n{2,}/g, '<br>')
+    .replace(/\n/g, ' ');
+}
+</script>
+</body>
+</html>

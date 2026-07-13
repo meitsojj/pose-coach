@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head><meta charset="UTF-8"><title>批次骨架抽取</title>
+<style>body{font-family:sans-serif;padding:20px}#log{white-space:pre-wrap;font-size:12px}</style>
+</head>
+<body>
+<h3>批次骨架抽取（templates.json 產生器）</h3>
+<div id="log">初始化…</div>
+<script type="module">
+import { FilesetResolver, PoseLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const log = m => { document.getElementById('log').textContent = m; };
+const KEY = [11,12,13,14,15,16,23,24,25,26,27,28]; // 肩肘腕髖膝踝
+const PER_SCENE = 12;
+
+window.__done = false;
+window.__result = null;
+window.__progress = '啟動中';
+
+(async () => {
+  try {
+    const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+    const lm = await PoseLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task", delegate: "GPU" },
+      runningMode: "IMAGE", numPoses: 1
+    });
+    const manifest = await (await fetch('/pose_imgs/manifest.json')).json();
+    const scenes = Object.keys(manifest);
+    const out = {};
+    let processed = 0, kept = 0;
+    const grand = scenes.reduce((s, k) => s + manifest[k].length, 0);
+
+    for (const scene of scenes) {
+      const cands = [];
+      for (const name of manifest[scene]) {
+        processed++;
+        window.__progress = `${processed}/${grand} ${scene}`;
+        if (processed % 20 === 0) log(window.__progress);
+        try {
+          const img = new Image();
+          await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = `/pose_imgs/${encodeURIComponent(scene)}/${encodeURIComponent(name)}`; });
+          const r = lm.detect(img);
+          if (!r.landmarks || !r.landmarks.length) continue;
+          const pts = r.landmarks[0];
+          // 品質分：關鍵關節平均可見度 + 是否涵蓋下半身
+          const vis = KEY.map(i => pts[i].visibility ?? 0);
+          const avgVis = vis.reduce((a,b)=>a+b,0) / vis.length;
+          const lowerVis = [25,26,27,28].map(i => pts[i].visibility ?? 0).reduce((a,b)=>a+b,0) / 4;
+          // 骨架在畫面中的高度佔比（太小=雜圖）
+          const ys = KEY.map(i => pts[i].y);
+          const span = Math.max(...ys) - Math.min(...ys);
+          if (avgVis < 0.55 || span < 0.25) continue;
+          cands.push({ name, q: avgVis + lowerVis * 0.5 + span * 0.3, lm: pts.map(p => [ +p.x.toFixed(4), +p.y.toFixed(4) ]), full: lowerVis > 0.5 });
+        } catch (e) { /* skip broken img */ }
+      }
+      cands.sort((a, b) => b.q - a.q);
+      out[scene] = cands.slice(0, PER_SCENE).map((c, i) => ({ id: scene + '-' + (i+1), src: c.name, full: c.full, lm: c.lm }));
+      kept += out[scene].length;
+    }
+    window.__result = out;
+    window.__done = true;
+    window.__progress = `完成：處理 ${processed} 張，保留 ${kept} 個模板`;
+    log(window.__progress);
+  } catch (e) {
+    window.__done = true;
+    window.__progress = 'ERROR: ' + e.message;
+    log(window.__progress);
+  }
+})();
+</script>
+</body>
+</html>
