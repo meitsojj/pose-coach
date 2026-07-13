@@ -179,8 +179,31 @@ function tinted(img, color) {
   og.fillStyle = color; og.fillRect(0, 0, off.width, off.height);
   return off;
 }
+// AI 人偶淡化疊層:人偶髖中點對位模板髖中點、人物高度等比,透明片效果
+function drawDoll(t) {
+  let img = maskCache[t.doll];
+  if (!img) {
+    img = new Image();
+    img.onload = () => { if (cur === t) render(); };
+    img.src = t.doll; maskCache[t.doll] = img;
+  }
+  if (!img.complete || !img.naturalWidth) return false;
+  const [dw, dh] = t.doll_comp.img_wh;
+  const tplH = (t.comp.bbox[3] - t.comp.bbox[1]) * H;
+  const dollH = (t.doll_comp.bbox[3] - t.doll_comp.bbox[1]) * dh;
+  const s = tplH / dollH;
+  const hipC = [t.comp.hip[0] * W, t.comp.hip[1] * H];
+  const x0 = hipC[0] - t.doll_comp.hip[0] * dw * s;
+  const y0 = hipC[1] - t.doll_comp.hip[1] * dh * s;
+  ctx.globalAlpha = .62;
+  ctx.drawImage(img, x0, y0, dw * s, dh * s);
+  ctx.globalAlpha = 1;
+  return true;
+}
+
 function drawGhost(t) {
   const m = mapper(t);
+  if (t.doll && drawDoll(t)) return;
   if (t.mask) {
     let img = maskCache[t.mask];
     if (!img) {
