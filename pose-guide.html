@@ -42,7 +42,7 @@
 <body>
 <div class="wrap">
   <h1>🩰 POSE 引導鏡</h1>
-  <div class="tagline">選場景或上傳參考照 → 相機出現幽靈骨架 → 跟著擺就對了</div>
+  <div class="tagline">選模板 → 相機出現「拍攝模板框」（淡化人偶＋構圖線）→ 站進框裡就對了</div>
 
   <div class="card">
     <h2>1️⃣ 選擇場景與 Pose</h2>
@@ -66,6 +66,7 @@
     <div class="ctrl">
       <button id="flip" title="切換鏡頭">🔄</button>
       <button class="shot" id="shot" title="拍照">📷</button>
+      <button id="mode" title="引導模式:🎯錨定(站進模板框)/👣跟隨(骨架跟著你)">🎯</button>
       <button id="stop" title="停止">✖️</button>
     </div>
   </div>
@@ -93,6 +94,19 @@ let builtins = {};                      // 場景 → 模板陣列（templates.j
 let uploads = JSON.parse(localStorage.getItem('pose_templates') || '[]'); // 使用者上傳
 let curScene = null, selIdx = 0;
 let stream = null, facing = 'environment', rafId = null;
+let anchorMode = true;                  // 🎯 錨定=拍攝模板框（預設）/ 👣 跟隨
+const ghostCache = {};                  // doll/mask 圖片與染色快取
+
+// 模板構圖資料；上傳模板沒有 comp 就從 lm 現算
+function getComp(t) {
+  if (t.comp) return t.comp;
+  if (!t._comp) {
+    const xs = t.lm.map(p => p[0]), ys = t.lm.map(p => p[1]);
+    t._comp = { hip: mid(t.lm[23], t.lm[24]),
+      bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };
+  }
+  return t._comp;
+}
 
 const statusEl = $('status');
 
@@ -240,6 +254,7 @@ function normalize(lm) {
 // ---------- 相機 ----------
 $('start').onclick = openCam;
 $('flip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; openCam(); };
+$('mode').onclick = () => { anchorMode = !anchorMode; $('mode').textContent = anchorMode ? '🎯' : '👣'; };
 $('stop').onclick = () => closeCam();
 
 async function openCam() {
@@ -283,6 +298,8 @@ function draw(live) {
   const tmpl = curTemplate();
   if (!tmpl) return;
 
+  if (anchorMode) { drawAnchor(ctx, tmpl, live, W, H); return; }
+
   const ref = normalize(tmpl.lm);
   let anchorHip, anchorScale;
   if (live) {
@@ -304,6 +321,100 @@ function draw(live) {
     $('score').classList.remove('good');
     $('hint').style.display = 'none';
   }
+}
+
+// ---------- 錨定模式：拍攝模板框 ----------
+function drawAnchor(ctx, tmpl, live, W, H) {
+  const comp = getComp(tmpl);
+  drawGuides(ctx, comp, W, H);
+  // 模板殘影：人偶 > 剪影 > 錨定骨架
+  if (!drawGhostCam(ctx, tmpl, comp, W, H)) {
+    drawSkel(ctx, tmpl.lm.map(p => [p[0] * W, p[1] * H]), 'rgba(255,255,255,.8)', 6);
+  }
+  if (live) {
+    drawSkel(ctx, live.map(p => [p[0] * W, p[1] * H]), 'rgba(212,145,123,.9)', 4);
+    scoreAnchor(tmpl, comp, live);
+  } else {
+    $('score').textContent = '找不到人';
+    $('score').classList.remove('good');
+    $('hint').style.display = 'none';
+  }
+}
+
+function drawGuides(ctx, comp, W, H) {
+  ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1.5;
+  [W / 3, W * 2 / 3].forEach(x => { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); });
+  [H / 3, H * 2 / 3].forEach(y => { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); });
+  if (comp.eye_y) {
+    ctx.strokeStyle = 'rgba(250,204,21,.7)'; ctx.lineWidth = 2; ctx.setLineDash([12, 8]);
+    ctx.beginPath(); ctx.moveTo(0, comp.eye_y * H); ctx.lineTo(W, comp.eye_y * H); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+// 淡化人偶（doll）或染色剪影（mask）錨定在模板站位；資產未載入回傳 false
+function drawGhostCam(ctx, t, comp, W, H) {
+  const src = t.doll || t.mask;
+  if (!src || !comp.img_wh) return false;
+  let img = ghostCache[src];
+  if (!img) { img = new Image(); img.src = src; ghostCache[src] = img; }
+  if (!img.complete || !img.naturalWidth) return false;
+  let drawable = img, alpha = .55;
+  if (!t.doll) {
+    const key = src + '#tint';
+    if (!ghostCache[key]) {
+      const off = document.createElement('canvas');
+      off.width = img.naturalWidth; off.height = img.naturalHeight;
+      const og = off.getContext('2d');
+      og.drawImage(img, 0, 0);
+      og.globalCompositeOperation = 'source-in';
+      og.fillStyle = '#2dd4bf'; og.fillRect(0, 0, off.width, off.height);
+      ghostCache[key] = off;
+    }
+    drawable = ghostCache[key]; alpha = .35;
+  }
+  const gc = t.doll ? t.doll_comp : comp;      // 資產自身座標系
+  const [dw, dh] = gc.img_wh;
+  const s = ((comp.bbox[3] - comp.bbox[1]) * H) / ((gc.bbox[3] - gc.bbox[1]) * dh);
+  const x0 = comp.hip[0] * W - gc.hip[0] * dw * s;
+  const y0 = comp.hip[1] * H - gc.hip[1] * dh * s;
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(drawable, x0, y0, dw * s, dh * s);
+  ctx.globalAlpha = 1;
+  return true;
+}
+
+// 構圖（站位/大小）40% + 姿勢 60%
+function scoreAnchor(tmpl, comp, live) {
+  const hipL = mid(live[23], live[24]);
+  const dx = hipL[0] - comp.hip[0];
+  const ys = live.map(p => p[1]);
+  const sizeR = (Math.max(...ys) - Math.min(...ys)) / (comp.bbox[3] - comp.bbox[1]);
+  let posHint = null;
+  if (Math.abs(dx) > .06) posHint = dx > 0 ? '⬅️ 往左移一點' : '➡️ 往右移一點';
+  else if (sizeR < .85) posHint = '👣 再靠近鏡頭一點';
+  else if (sizeR > 1.15) posHint = '👣 再後退一點';
+  const compScore = Math.max(0, 100 - Math.abs(dx) * 300 - Math.abs(sizeR - 1) * 120);
+
+  let total = 0, worst = null, worstDiff = 0;
+  for (const [name, a, b, c] of JOINTS) {
+    const d = Math.abs(angle(tmpl.lm[a], tmpl.lm[b], tmpl.lm[c]) - angle(live[a], live[b], live[c]));
+    total += d;
+    if (d > worstDiff) { worstDiff = d; worst = name; }
+  }
+  const poseScore = Math.max(0, 100 - (total / JOINTS.length) * 1.8);
+  const score = Math.round(poseScore * .6 + compScore * .4);
+  const el = $('score');
+  el.textContent = score + ' 分';
+  el.classList.toggle('good', score >= 85);
+  const hint = $('hint');
+  if (posHint) { hint.textContent = posHint; hint.style.display = 'block'; }
+  else if (score >= 85) { hint.textContent = '✨ 站位和 pose 都到位，拍！'; hint.style.display = 'block'; }
+  else if (worstDiff > 25) {
+    const key = Object.keys(HINT_MAP).find(k => worst.includes(k));
+    hint.textContent = '💡 ' + worst + '：' + (key ? HINT_MAP[key] : '再調整一下');
+    hint.style.display = 'block';
+  } else hint.style.display = 'none';
 }
 
 function drawSkel(ctx, pts, color, w) {
