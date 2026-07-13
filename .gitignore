@@ -1,2 +1,5 @@
 pose_imgs/
 .firecrawl/
+*.task
+*.bak
+.claude/

@@ -7,7 +7,9 @@
 | 檔案 | 用途 |
 |---|---|
 | `pose-guide.html` | POSE 引導鏡:選場景模板 → 相機疊幽靈骨架 → 關節角評分提示 |
-| `templates.json` | 131 個場景 pose 模板(11 場景;僅骨架關鍵點與場景標籤,不含照片) |
+| `anchor-preview.html` | 錨定模式預覽(免相機):構圖層/Reels 安全區層 + 骨架錨定在模板站位 |
+| `templates.json` | 131 個場景 pose 模板(11 場景;骨架關鍵點 + comp 構圖欄位,不含照片) |
+| `extract_comp.py` | (內部工具)幫模板補抽構圖欄位:髖中點/bbox/眼睛線/原圖尺寸 |
 | `demo.html` | (內部工具)AI 照片點評,需自備 Claude API key |
 | `batch.html` | (內部工具)模板批次抽取 pipeline |
 
