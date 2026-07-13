@@ -4,3 +4,5 @@ pose_imgs/
 *.bak
 .claude/
 對照圖/
+生成參考包/
+gen_imgs/
