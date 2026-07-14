@@ -67,7 +67,7 @@
       <button id="flip" title="切換鏡頭">🔄</button>
       <button class="shot" id="shot" title="拍照">📷</button>
       <button id="mode" title="引導模式:🎯錨定(站進模板框)/👣跟隨(骨架跟著你)">🎯</button>
-      <button id="frame" title="取景:照示範照全身構圖/重新取景成半身構圖" style="font-size:.7rem;font-weight:700">全身</button>
+      <button id="frame" title="取景循環:原框(照示範照)→七分(膝上)→半身(腰上)" style="font-size:.7rem;font-weight:700">原框</button>
       <button id="stop" title="停止">✖️</button>
     </div>
   </div>
@@ -96,26 +96,31 @@ let uploads = JSON.parse(localStorage.getItem('pose_templates') || '[]'); // 使
 let curScene = null, selIdx = 0;
 let stream = null, facing = 'environment', rafId = null;
 let anchorMode = true;                  // 🎯 錨定=拍攝模板框（預設）/ 👣 跟隨
-let halfFrame = false;                  // 取景：false=照示範照全身構圖 / true=重新取景成半身
+let frameMode = 0;                      // 取景：0 原框（照示範照）/ 1 七分（膝上）/ 2 半身（腰上）
+const FRAME_LABEL = ['原框', '七分', '半身'];
 const ghostCache = {};                  // doll/mask 圖片與染色快取
 
-// 半身取景：同一個 pose 重新取景 — 眼睛壓上 1/3、下緣裁在大腿中段（不裁關節）
-function halfComp(t) {
-  if (t._half) return t._half;
+// 重新取景：眼睛壓上 1/3，下緣裁在指定裁切線（避開關節：七分=大腿中段、半身=自然腰線）
+function framedComp(t) {
+  if (frameMode === 0) return getComp(t);
+  const key = '_f' + frameMode;
+  if (t[key]) return t[key];
   const c = getComp(t);
   const eye = c.eye_y || (c.bbox[1] + (c.bbox[3] - c.bbox[1]) * .08);
   const hipY = c.hip[1];
+  const shoulderY = (t.lm[11][1] + t.lm[12][1]) / 2;
   const kneeY = (t.lm[25][1] + t.lm[26][1]) / 2;
-  const cropY = (hipY + kneeY) / 2;                 // 大腿中段
+  const cropY = frameMode === 1
+    ? (hipY + kneeY) / 2                       // 七分：大腿中段
+    : hipY - (hipY - shoulderY) * .2;          // 半身：自然腰線（髖上方）
   const k = (0.97 - 1 / 3) / Math.max(cropY - eye, 1e-4); // 眼→1/3、裁切線→畫面近底
   const my = y => 1 / 3 + (y - eye) * k;
-  t._half = {
+  return (t[key] = {
     hip: [c.hip[0], my(hipY)],
     bbox: [c.bbox[0], my(c.bbox[1]), c.bbox[2], my(c.bbox[3])],
     eye_y: 1 / 3,
     img_wh: c.img_wh,
-  };
-  return t._half;
+  });
 }
 
 // 模板構圖資料；上傳模板沒有 comp 就從 lm 現算
@@ -293,7 +298,7 @@ function normalize(lm) {
 $('start').onclick = openCam;
 $('flip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; openCam(); };
 $('mode').onclick = () => { anchorMode = !anchorMode; $('mode').textContent = anchorMode ? '🎯' : '👣'; };
-$('frame').onclick = () => { halfFrame = !halfFrame; $('frame').textContent = halfFrame ? '半身' : '全身'; };
+$('frame').onclick = () => { frameMode = (frameMode + 1) % 3; $('frame').textContent = FRAME_LABEL[frameMode]; };
 $('stop').onclick = () => closeCam();
 
 async function openCam() {
@@ -371,7 +376,7 @@ function draw(live) {
 
 // ---------- 錨定模式：拍攝模板框 ----------
 function drawAnchor(ctx, tmpl, live, W, H) {
-  const comp = halfFrame ? halfComp(tmpl) : getComp(tmpl);
+  const comp = framedComp(tmpl);
   drawGuides(ctx, comp, W, H);
   // 模板殘影：人偶 > 剪影 > 錨定骨架（以 hip 為錨、依取景比例縮放；全身取景時 k=1 恆等）
   if (!drawGhostCam(ctx, tmpl, comp, W, H)) {
