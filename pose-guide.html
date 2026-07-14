@@ -480,15 +480,31 @@ function scoreAndHint(refLm, liveLm) {
 }
 
 // ---------- 拍照 ----------
-$('shot').onclick = () => {
+$('shot').onclick = async () => {
   const v = $('video');
+  if (!v.videoWidth) return;
   const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
   c.getContext('2d').drawImage(v, 0, 0);
+  shutterFlash();
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', .92));
+  const file = new File([blob], 'pose-shot.jpg', { type: 'image/jpeg' });
+  // iOS/Android：原生分享面板 → 儲存影像（data URL 下載在 iOS Safari 會被忽略）
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
   const dl = $('dl');
-  dl.href = c.toDataURL('image/jpeg', .92);
+  dl.href = URL.createObjectURL(blob);
   dl.style.display = 'block';
   dl.click();
 };
+
+function shutterFlash() {
+  const f = document.createElement('div');
+  f.style.cssText = 'position:absolute;inset:0;background:#fff;opacity:.85;pointer-events:none;transition:opacity .3s;z-index:5';
+  $('stage').appendChild(f);
+  requestAnimationFrame(() => { f.style.opacity = '0'; setTimeout(() => f.remove(), 350); });
+}
 </script>
 </body>
 </html>
