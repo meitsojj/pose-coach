@@ -303,7 +303,14 @@ function loop() {
   if (v.readyState >= 2 && now !== lastT) {
     lastT = now;
     const res = videoLm.detectForVideo(v, now);
-    draw(res.landmarks && res.landmarks[0] ? res.landmarks[0].map(p => [p.x, p.y]) : null);
+    // 可見度門檻:軀幹四點平均 visibility 過低視為沒有人(避免把雜物誤判成人)
+    let live = null;
+    const p = res.landmarks && res.landmarks[0];
+    if (p) {
+      const vis = [11, 12, 23, 24].reduce((a, i) => a + (p[i].visibility || 0), 0) / 4;
+      if (vis > .5) live = p.map(q => [q.x, q.y]);
+    }
+    draw(live);
   }
   rafId = requestAnimationFrame(loop);
 }
