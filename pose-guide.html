@@ -164,9 +164,13 @@ function renderTmpls() {
   list.forEach((t, i) => {
     const d = document.createElement('div');
     d.className = 'tmpl' + (i === selIdx ? ' sel' : '');
-    if (t.thumb) {
+    if (t.doll) {          // 有 AI 人偶 → 縮圖直接用人偶圖
+      const img = document.createElement('img'); img.src = t.doll;
+      img.style.objectFit = 'contain'; img.style.background = '#fff';
+      d.appendChild(img);
+    } else if (t.thumb) {
       const img = document.createElement('img'); img.src = t.thumb; d.appendChild(img);
-    } else {
+    } else {               // 沒有人偶 → 火柴人(暫留,之後逐步被人偶取代)
       const c = document.createElement('canvas'); c.width = 70; c.height = 94;
       drawStick(c.getContext('2d'), t.lm, 70, 94, '#b56f58', 2.5);
       d.appendChild(c);
